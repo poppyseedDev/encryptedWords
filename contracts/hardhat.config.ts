@@ -1,67 +1,44 @@
 import "@nomicfoundation/hardhat-toolbox";
-import { config as dotenvConfig } from "dotenv";
-import * as fs from "fs";
+import dotenv from "dotenv";
+import * as fs from "fs-extra";
 import "hardhat-deploy";
-import "hardhat-preprocessor";
-import { TASK_PREPROCESS } from "hardhat-preprocessor";
+import "hardhat-ignore-warnings";
 import type { HardhatUserConfig } from "hardhat/config";
+import { extendProvider } from "hardhat/config";
 import { task } from "hardhat/config";
 import type { NetworkUserConfig } from "hardhat/types";
 import { resolve } from "path";
 import * as path from "path";
 
+import CustomProvider from "./CustomProvider";
+// Adjust the import path as needed
 import "./tasks/accounts";
-import "./tasks/deployERC20";
 import "./tasks/getEthereumAddress";
-import "./tasks/mint";
+import "./tasks/taskDeploy";
+import "./tasks/taskGatewayRelayer";
+import "./tasks/taskTFHE";
 
-function getAllSolidityFiles(dir: string, fileList: string[] = []): string[] {
-  fs.readdirSync(dir).forEach((file) => {
-    const filePath = path.join(dir, file);
-    if (fs.statSync(filePath).isDirectory()) {
-      getAllSolidityFiles(filePath, fileList);
-    } else if (filePath.endsWith(".sol")) {
-      fileList.push(filePath);
-    }
-  });
-  return fileList;
-}
-
-task("coverage-mock", "Run coverage after running pre-process task").setAction(async function (args, env) {
-  const contractsPath = path.join(env.config.paths.root, "contracts/");
-  const solidityFiles = getAllSolidityFiles(contractsPath);
-  const originalContents: Record<string, string> = {};
-  solidityFiles.forEach((filePath) => {
-    originalContents[filePath] = fs.readFileSync(filePath, { encoding: "utf8" });
-  });
-
-  try {
-    await env.run(TASK_PREPROCESS);
-    await env.run("coverage");
-  } finally {
-    // Restore original files
-    for (const filePath in originalContents) {
-      fs.writeFileSync(filePath, originalContents[filePath], { encoding: "utf8" });
-    }
-  }
+extendProvider(async (provider) => {
+  const newProvider = new CustomProvider(provider);
+  return newProvider;
 });
 
-const dotenvConfigPath: string = process.env.DOTENV_CONFIG_PATH || "./.env";
-dotenvConfig({ path: resolve(__dirname, dotenvConfigPath) });
+task("compile:specific", "Compiles only the specified contract")
+  .addParam("contract", "The contract's path")
+  .setAction(async ({ contract }, hre) => {
+    // Adjust the configuration to include only the specified contract
+    hre.config.paths.sources = contract;
 
+    await hre.run("compile");
+  });
+
+const dotenvConfigPath: string = process.env.DOTENV_CONFIG_PATH || "./.env";
+dotenv.config({ path: resolve(__dirname, dotenvConfigPath) });
+
+// Ensure that we have all the environment variables we need.
 const mnemonic: string | undefined = process.env.MNEMONIC;
 if (!mnemonic) {
   throw new Error("Please set your MNEMONIC in a .env file");
-}
-
-const network = process.env.HARDHAT_NETWORK;
-
-function getRemappings() {
-  return fs
-    .readFileSync("remappings.txt", "utf8")
-    .split("\n")
-    .filter(Boolean) // remove empty lines
-    .map((line: string) => line.trim().split("="));
 }
 
 const chainIds = {
@@ -98,26 +75,48 @@ function getChainConfig(chain: keyof typeof chainIds): NetworkUserConfig {
   };
 }
 
+task("coverage").setAction(async (taskArgs, hre, runSuper) => {
+  hre.config.networks.hardhat.allowUnlimitedContractSize = true;
+  hre.config.networks.hardhat.blockGasLimit = 1099511627775;
+  await runSuper(taskArgs);
+});
+
+task("test", async (taskArgs, hre, runSuper) => {
+  // Run modified test task
+  if (hre.network.name === "hardhat") {
+    // in fhevm mode all this block is done when launching the node via `pnmp fhevm:start`
+    await hre.run("compile:specific", { contract: "contracts" });
+    const sourceDir = path.resolve(__dirname, "node_modules/fhevm/");
+    const destinationDir = path.resolve(__dirname, "fhevmTemp/");
+    fs.copySync(sourceDir, destinationDir, { dereference: true });
+    await hre.run("compile:specific", { contract: "fhevmTemp/lib" });
+    await hre.run("compile:specific", { contract: "fhevmTemp/gateway" });
+    const abiDir = path.resolve(__dirname, "abi");
+    fs.ensureDirSync(abiDir);
+    const sourceFile = path.resolve(__dirname, "artifacts/fhevmTemp/lib/TFHEExecutor.sol/TFHEExecutor.json");
+    const destinationFile = path.resolve(abiDir, "TFHEExecutor.json");
+    fs.copyFileSync(sourceFile, destinationFile);
+
+    const targetAddress = "0x000000000000000000000000000000000000005d";
+    const MockedPrecompile = await hre.artifacts.readArtifact("MockedPrecompile");
+    const bytecode = MockedPrecompile.deployedBytecode;
+    await hre.network.provider.send("hardhat_setCode", [targetAddress, bytecode]);
+    console.log(`Code of Mocked Pre-compile set at address: ${targetAddress}`);
+
+    const privKeyDeployer = process.env.PRIVATE_KEY_GATEWAY_DEPLOYER;
+    await hre.run("task:computePredeployAddress", { privateKey: privKeyDeployer });
+    await hre.run("task:computeACLAddress");
+    await hre.run("task:computeTFHEExecutorAddress");
+    await hre.run("task:computeKMSVerifierAddress");
+    await hre.run("task:deployACL");
+    await hre.run("task:deployTFHEExecutor");
+    await hre.run("task:deployKMSVerifier");
+    await hre.run("task:launchFhevm", { skipGetCoin: false });
+  }
+  await runSuper();
+});
+
 const config: HardhatUserConfig = {
-  preprocess: {
-    eachLine: () => ({
-      transform: (line: string) => {
-        if (network === "hardhat") {
-          // checks if HARDHAT_NETWORK env variable is set to "hardhat" to use the remapping for the mocked version of TFHE.sol
-          if (line.match(/".*.sol";$/)) {
-            // match all lines with `"<any-import-path>.sol";`
-            for (const [from, to] of getRemappings()) {
-              if (line.includes(from)) {
-                line = line.replace(from, to);
-                break;
-              }
-            }
-          }
-        }
-        return line;
-      },
-    }),
-  },
   defaultNetwork: "local",
   namedAccounts: {
     deployer: 0,
@@ -132,6 +131,13 @@ const config: HardhatUserConfig = {
     src: "./contracts",
   },
   networks: {
+    hardhat: {
+      accounts: {
+        count: 10,
+        mnemonic,
+        path: "m/44'/60'/0'/0",
+      },
+    },
     zama: getChainConfig("zama"),
     localDev: getChainConfig("local"),
     local: getChainConfig("local"),
@@ -145,7 +151,7 @@ const config: HardhatUserConfig = {
     tests: "./test",
   },
   solidity: {
-    version: "0.8.22",
+    version: "0.8.24",
     settings: {
       metadata: {
         // Not including the metadata hash
@@ -158,7 +164,12 @@ const config: HardhatUserConfig = {
         enabled: true,
         runs: 800,
       },
-      evmVersion: "shanghai",
+      evmVersion: "cancun",
+    },
+  },
+  warnings: {
+    "*": {
+      "transient-storage": false,
     },
   },
   typechain: {
