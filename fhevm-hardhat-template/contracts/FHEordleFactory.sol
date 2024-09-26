@@ -2,12 +2,11 @@
 
 pragma solidity ^0.8.20;
 
-import "fhevm/abstracts/EIP712WithModifier.sol";
 import "./FHEordle.sol";
 import "fhevm/lib/TFHE.sol";
 import "@openzeppelin/contracts/proxy/Clones.sol";
 
-contract FHEordleFactory is EIP712WithModifier {
+contract FHEordleFactory is Ownable2Step {
     address public creator;
 
     mapping(address => address) public userLastContract;
@@ -16,29 +15,21 @@ contract FHEordleFactory is EIP712WithModifier {
     mapping(address => bool) public claimedWin;
     address private immutable implementation;
 
-    constructor(address _implementation) EIP712WithModifier("Authorization token", "1") {
+    constructor(address _implementation) Ownable(msg.sender) {
         creator = msg.sender;
         implementation = _implementation;
     }
 
     function createGame(address _relayerAddr, bytes32 salt) public {
-        address cloneAdd = Clones.cloneDeterministic(implementation,salt);
-        FHEordle(cloneAdd).initialize(
-                msg.sender,
-                _relayerAddr,
-                0
-        );
+        address cloneAdd = Clones.cloneDeterministic(implementation, salt);
+        FHEordle(cloneAdd).initialize(msg.sender, _relayerAddr, 0);
         userLastContract[msg.sender] = cloneAdd;
     }
 
     function createTest(address _relayerAddr, uint16 id, bytes32 salt) public {
         require(userLastContract[msg.sender] == address(0), "kek");
-        address cloneAdd = Clones.cloneDeterministic(implementation,salt);
-        FHEordle(cloneAdd).initialize(
-                msg.sender,
-                _relayerAddr,
-                id
-        );
+        address cloneAdd = Clones.cloneDeterministic(implementation, salt);
+        FHEordle(cloneAdd).initialize(msg.sender, _relayerAddr, id);
         userLastContract[msg.sender] = cloneAdd;
     }
 

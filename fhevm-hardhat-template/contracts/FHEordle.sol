@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import "fhevm/lib/TFHE.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
-// import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
-contract FHEordle is Ownable2Step {
-    //, Initializable {
+contract FHEordle is Ownable2Step, Initializable {
     /// Constants
     bytes32 public constant root = 0x918fd5f641d6c8bb0c5e07a42f975969c2575250dc3fb743346d1a3c11728bdd;
     bytes32 public constant rootAllowed = 0xd3e7a12d252dcf5de57a406f0bd646217ec1f340bad869182e5b2bfadd086993;
@@ -58,11 +57,15 @@ contract FHEordle is Ownable2Step {
         word1 = 0;
     }
 
-    function getWord1Id(
-        bytes32 publicKey,
-        bytes calldata signature
-    ) public view virtual onlySignedPublicKey(publicKey, signature) onlyRelayer returns (bytes memory) {
-        return TFHE.reencrypt(word1Id, publicKey);
+    // function getWord1Id(
+    //     bytes32 publicKey,
+    //     bytes calldata signature
+    // ) public view virtual onlySignedPublicKey(publicKey, signature) onlyRelayer returns (bytes memory) {
+    //     return TFHE.reencrypt(word1Id, publicKey);
+    // }
+
+    function getWord1Id(bytes32 publicKey, bytes calldata signature) public view virtual onlyRelayer returns (euint16) {
+        return (word1Id); //publicKey);
     }
 
     function submitWord1(
@@ -72,7 +75,15 @@ contract FHEordle is Ownable2Step {
         bytes calldata el3,
         bytes calldata el4
     ) public {
-        submitWord1(TFHE.asEuint8(el0), TFHE.asEuint8(el1), TFHE.asEuint8(el2), TFHE.asEuint8(el3), TFHE.asEuint8(el4));
+        // Decode the bytes to uint8
+        euint8 l0 = TFHE.asEuint8(abi.decode(el0, (uint8)));
+        euint8 l1 = TFHE.asEuint8(abi.decode(el1, (uint8)));
+        euint8 l2 = TFHE.asEuint8(abi.decode(el2, (uint8)));
+        euint8 l3 = TFHE.asEuint8(abi.decode(el3, (uint8)));
+        euint8 l4 = TFHE.asEuint8(abi.decode(el4, (uint8)));
+
+        // Call the overloaded submitWord1 with euint8 values
+        submitWord1(l0, l1, l2, l3, l4);
     }
 
     function submitWord1(euint8 l0, euint8 l1, euint8 l2, euint8 l3, euint8 l4) public onlyRelayer {
@@ -139,7 +150,7 @@ contract FHEordle is Ownable2Step {
     }
 
     function getGuess(uint8 guessN) public view onlyPlayer returns (uint8, uint32) {
-        require(guessN < nGuesses, "canno exceed nGuesses");
+        require(guessN < nGuesses, "cannot exceed nGuesses");
         euint8 eqMask = getEqMask(guessN);
         euint32 letterMaskGuess = getLetterMaskGuess(guessN);
         return (TFHE.decrypt(eqMask), TFHE.decrypt(letterMaskGuess));
