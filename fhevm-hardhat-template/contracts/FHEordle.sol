@@ -6,8 +6,9 @@ import "fhevm/lib/TFHE.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
+import "fhevm/gateway/GatewayCaller.sol";
 
-contract FHEordle is Ownable2Step, Initializable {
+contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
     /// Constants
     bytes32 public constant root = 0x918fd5f641d6c8bb0c5e07a42f975969c2575250dc3fb743346d1a3c11728bdd;
     bytes32 public constant rootAllowed = 0xd3e7a12d252dcf5de57a406f0bd646217ec1f340bad869182e5b2bfadd086993;
@@ -149,29 +150,96 @@ contract FHEordle is Ownable2Step, Initializable {
         return TFHE.and(word1LettersMask, TFHE.asEuint32(letterMask));
     }
 
-    function getGuess(uint8 guessN) public view onlyPlayer returns (uint8, uint32) {
+    // function getGuess(uint8 guessN) public view onlyPlayer returns (uint8, uint32) {
+    //     require(guessN < nGuesses, "cannot exceed nGuesses");
+    //     euint8 eqMask = getEqMask(guessN);
+    //     euint32 letterMaskGuess = getLetterMaskGuess(guessN);
+    //     return (TFHE.decrypt(eqMask), TFHE.decrypt(letterMaskGuess));
+    // }
+
+    function getGuess(uint8 guessN) public onlyPlayer {
         require(guessN < nGuesses, "cannot exceed nGuesses");
+
+        // Get the encrypted values
         euint8 eqMask = getEqMask(guessN);
         euint32 letterMaskGuess = getLetterMaskGuess(guessN);
-        return (TFHE.decrypt(eqMask), TFHE.decrypt(letterMaskGuess));
+
+        // Prepare an array of ciphertexts to decrypt
+        uint256[] memory cts = new uint256[](2);
+        cts[0] = Gateway.toUint256(eqMask);
+        cts[1] = Gateway.toUint256(letterMaskGuess);
+
+        // Request decryption via the gateway
+        Gateway.requestDecryption(cts, this.callbackGuess.selector, 0, block.timestamp + 100, false);
     }
+
+    function callbackGuess(
+        uint256 /*requestID*/,
+        uint8 decryptedEqMask,
+        uint32 decryptedLetterMask
+    ) public onlyGateway returns (uint8, uint32) {
+        // emit GuessDecrypted(decryptedEqMask, decryptedLetterMask);
+        return (decryptedEqMask, decryptedLetterMask);
+    }
+
+    // function claimWin(uint8 guessN) public onlyPlayer {
+    //     euint8 fullMask = TFHE.asEuint8(31);
+    //     bool compare = TFHE.decrypt(TFHE.eq(fullMask, getEqMask(guessN)));
+    //     if (compare) {
+    //         playerWon = true;
+    //     }
+    // }
 
     function claimWin(uint8 guessN) public onlyPlayer {
         euint8 fullMask = TFHE.asEuint8(31);
-        bool compare = TFHE.decrypt(TFHE.eq(fullMask, getEqMask(guessN)));
-        if (compare) {
+        ebool is_equal = TFHE.eq(fullMask, getEqMask(guessN));
+        // Request decryption via the Gateway
+        uint256[] memory cts = new uint256[](1);
+        cts[0] = Gateway.toUint256(is_equal);
+        Gateway.requestDecryption(cts, this.callbackClaimWin.selector, 0, block.timestamp + 100, false);
+    }
+
+    function callbackClaimWin(uint256 /*requestID*/, bool decryptedComparison) public onlyGateway {
+        // Handle the decrypted comparison result
+        if (decryptedComparison) {
             playerWon = true;
         }
     }
 
-    function revealWord() public view onlyPlayer returns (uint8, uint8, uint8, uint8, uint8) {
-        assert(nGuesses == 5 || playerWon);
-        uint8 l0 = TFHE.decrypt(word1Letters[0]);
-        uint8 l1 = TFHE.decrypt(word1Letters[1]);
-        uint8 l2 = TFHE.decrypt(word1Letters[2]);
-        uint8 l3 = TFHE.decrypt(word1Letters[3]);
-        uint8 l4 = TFHE.decrypt(word1Letters[4]);
-        return (l0, l1, l2, l3, l4);
+    // function revealWord() public view onlyPlayer returns (uint8, uint8, uint8, uint8, uint8) {
+    //     assert(nGuesses == 5 || playerWon);
+    //     uint8 l0 = TFHE.decrypt(word1Letters[0]);
+    //     uint8 l1 = TFHE.decrypt(word1Letters[1]);
+    //     uint8 l2 = TFHE.decrypt(word1Letters[2]);
+    //     uint8 l3 = TFHE.decrypt(word1Letters[3]);
+    //     uint8 l4 = TFHE.decrypt(word1Letters[4]);
+    //     return (l0, l1, l2, l3, l4);
+    // }
+
+    function revealWord() public onlyPlayer {
+        // Prepare the ciphertext array for the five letters
+        uint256[] memory cts = new uint256[](5);
+
+        cts[0] = Gateway.toUint256(word1Letters[0]);
+        cts[1] = Gateway.toUint256(word1Letters[1]);
+        cts[2] = Gateway.toUint256(word1Letters[2]);
+        cts[3] = Gateway.toUint256(word1Letters[3]);
+        cts[4] = Gateway.toUint256(word1Letters[4]);
+
+        // Request decryption of the letters
+        Gateway.requestDecryption(cts, this.callbackRevealWord.selector, 0, block.timestamp + 100, false);
+    }
+
+    function callbackRevealWord(
+        uint256 /*requestID*/,
+        uint8 l0,
+        uint8 l1,
+        uint8 l2,
+        uint8 l3,
+        uint8 l4
+    ) public onlyGateway {
+        // Handle the decrypted word letters here (e.g., emit events or store values)
+        emit WordRevealed(l0, l1, l2, l3, l4); // Optionally emit an event
     }
 
     function revealWordAndStore() public onlyPlayer {
