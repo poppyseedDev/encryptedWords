@@ -35,6 +35,14 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
     bool public playerWon;
     bool public proofChecked;
 
+    // Storage values for callbacks
+    uint8 public l0;
+    uint8 public l1;
+    uint8 public l2;
+    uint8 public l3;
+    uint8 public l4;
+    bytes32[] public storedProof;
+
     //events
     event WordSubmitted(address indexed player, uint32 word);
     event GuessDecryptionRequested(uint8 guessN, uint256 timestamp);
@@ -73,7 +81,7 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
     //     return TFHE.reencrypt(word1Id, publicKey);
     // }
 
-    function getWord1Id(bytes32 publicKey, bytes calldata signature) public view virtual onlyRelayer returns (euint16) {
+    function getWord1Id() public view virtual onlyRelayer returns (euint16) {
         return (word1Id); //publicKey);
     }
 
@@ -85,23 +93,23 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
         bytes calldata el4
     ) public {
         // Decode the bytes to uint8
-        euint8 l0 = TFHE.asEuint8(abi.decode(el0, (uint8)));
-        euint8 l1 = TFHE.asEuint8(abi.decode(el1, (uint8)));
-        euint8 l2 = TFHE.asEuint8(abi.decode(el2, (uint8)));
-        euint8 l3 = TFHE.asEuint8(abi.decode(el3, (uint8)));
-        euint8 l4 = TFHE.asEuint8(abi.decode(el4, (uint8)));
+        euint8 _l0 = TFHE.asEuint8(abi.decode(el0, (uint8)));
+        euint8 _l1 = TFHE.asEuint8(abi.decode(el1, (uint8)));
+        euint8 _l2 = TFHE.asEuint8(abi.decode(el2, (uint8)));
+        euint8 _l3 = TFHE.asEuint8(abi.decode(el3, (uint8)));
+        euint8 _l4 = TFHE.asEuint8(abi.decode(el4, (uint8)));
 
         // Call the overloaded submitWord1 with euint8 values
-        submitWord1(l0, l1, l2, l3, l4);
+        submitWord1(_l0, _l1, _l2, _l3, _l4);
     }
 
-    function submitWord1(euint8 l0, euint8 l1, euint8 l2, euint8 l3, euint8 l4) public onlyRelayer {
+    function submitWord1(euint8 _l0, euint8 _l1, euint8 _l2, euint8 _l3, euint8 _l4) public onlyRelayer {
         require(!wordSubmitted, "word submitted");
-        word1Letters[0] = l0;
-        word1Letters[1] = l1;
-        word1Letters[2] = l2;
-        word1Letters[3] = l3;
-        word1Letters[4] = l4;
+        word1Letters[0] = _l0;
+        word1Letters[1] = _l1;
+        word1Letters[2] = _l2;
+        word1Letters[3] = _l3;
+        word1Letters[4] = _l4;
         word1LettersMask = TFHE.or(
             TFHE.shl(TFHE.asEuint32(1), word1Letters[0]),
             TFHE.or(
@@ -127,18 +135,18 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
         nGuesses += 1;
     }
 
-    function getEqMask(uint8 guessN) internal view returns (euint8) {
+    function getEqMask(uint8 guessN) internal returns (euint8) {
         uint32 word = guessHist[guessN];
-        uint8 l0 = uint8((word) % 26);
-        uint8 l1 = uint8((word / 26) % 26);
-        uint8 l2 = uint8((word / 26 / 26) % 26);
-        uint8 l3 = uint8((word / 26 / 26 / 26) % 26);
-        uint8 l4 = uint8((word / 26 / 26 / 26 / 26) % 26);
-        euint8 g0 = TFHE.asEuint8(TFHE.eq(word1Letters[0], l0));
-        euint8 g1 = TFHE.asEuint8(TFHE.eq(word1Letters[1], l1));
-        euint8 g2 = TFHE.asEuint8(TFHE.eq(word1Letters[2], l2));
-        euint8 g3 = TFHE.asEuint8(TFHE.eq(word1Letters[3], l3));
-        euint8 g4 = TFHE.asEuint8(TFHE.eq(word1Letters[4], l4));
+        uint8 _l0 = uint8((word) % 26);
+        uint8 _l1 = uint8((word / 26) % 26);
+        uint8 _l2 = uint8((word / 26 / 26) % 26);
+        uint8 _l3 = uint8((word / 26 / 26 / 26) % 26);
+        uint8 _l4 = uint8((word / 26 / 26 / 26 / 26) % 26);
+        euint8 g0 = TFHE.asEuint8(TFHE.eq(word1Letters[0], _l0));
+        euint8 g1 = TFHE.asEuint8(TFHE.eq(word1Letters[1], _l1));
+        euint8 g2 = TFHE.asEuint8(TFHE.eq(word1Letters[2], _l2));
+        euint8 g3 = TFHE.asEuint8(TFHE.eq(word1Letters[3], _l3));
+        euint8 g4 = TFHE.asEuint8(TFHE.eq(word1Letters[4], _l4));
         euint8 eqMask = TFHE.or(
             TFHE.shl(g0, 0),
             TFHE.or(TFHE.shl(g1, 1), TFHE.or(TFHE.shl(g2, 2), TFHE.or(TFHE.shl(g3, 3), TFHE.shl(g4, 4))))
@@ -146,15 +154,15 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
         return eqMask;
     }
 
-    function getLetterMaskGuess(uint8 guessN) internal view returns (euint32) {
+    function getLetterMaskGuess(uint8 guessN) internal returns (euint32) {
         uint32 word = guessHist[guessN];
-        uint32 l0 = (word) % 26;
-        uint32 l1 = (word / 26) % 26;
-        uint32 l2 = (word / 26 / 26) % 26;
-        uint32 l3 = (word / 26 / 26 / 26) % 26;
-        uint32 l4 = (word / 26 / 26 / 26 / 26) % 26;
+        uint32 _l0 = (word) % 26;
+        uint32 _l1 = (word / 26) % 26;
+        uint32 _l2 = (word / 26 / 26) % 26;
+        uint32 _l3 = (word / 26 / 26 / 26) % 26;
+        uint32 _l4 = (word / 26 / 26 / 26 / 26) % 26;
         uint32 base = 1;
-        uint32 letterMask = (base << l0) | (base << l1) | (base << l2) | (base << l3) | (base << l4);
+        uint32 letterMask = (base << _l0) | (base << _l1) | (base << _l2) | (base << _l3) | (base << _l4);
         return TFHE.and(word1LettersMask, TFHE.asEuint32(letterMask));
     }
 
@@ -229,7 +237,7 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
     //     return (l0, l1, l2, l3, l4);
     // }
 
-    function revealWord() public view onlyPlayer {
+    function revealWord() public onlyPlayer {
         // Prepare the ciphertext array for the five letters
         uint256[] memory cts = new uint256[](5);
 
@@ -244,23 +252,24 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
 
     function callbackRevealWord(
         uint256 /*requestID*/,
-        uint8 l0,
-        uint8 l1,
-        uint8 l2,
-        uint8 l3,
-        uint8 l4
-    ) public view onlyPlayer returns (uint8, uint8, uint8, uint8, uint8) {
+        uint8 _l0,
+        uint8 _l1,
+        uint8 _l2,
+        uint8 _l3,
+        uint8 _l4
+    ) public onlyPlayer returns (uint8, uint8, uint8, uint8, uint8) {
+        l0 = _l0;
+        l1 = _l1;
+        l2 = _l2;
+        l3 = _l3;
+        l4 = _l4;
         // Handle the decrypted word letters here (e.g., emit events or store values)
         return (l0, l1, l2, l3, l4); // Optionally emit an event
     }
 
     function revealWordAndStore() public onlyPlayer {
-        uint8 l0;
-        uint8 l1;
-        uint8 l2;
-        uint8 l3;
-        uint8 l4;
-        (l0, l1, l2, l3, l4) = revealWord();
+        require(l0 != 0 || l1 != 0 || l2 != 0 || l3 != 0 || l4 != 0, "Word not revealed yet");
+
         word1 =
             uint32(l0) +
             uint32(l1) *
@@ -287,8 +296,6 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
     //         proofChecked = true;
     //     }
     // }
-
-    bytes32[] public storedProof;
 
     function checkProof(bytes32[] calldata proof) public onlyRelayer {
         // Store the proof for use in the callback
