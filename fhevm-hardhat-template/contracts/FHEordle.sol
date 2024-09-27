@@ -35,6 +35,14 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
     bool public playerWon;
     bool public proofChecked;
 
+    //events
+    event WordSubmitted(address indexed player, uint32 word);
+    event GuessDecryptionRequested(uint8 guessN, uint256 timestamp);
+    event PlayerWon(address indexed player);
+    event GuessDecrypted(uint8 decryptedEqMask, uint32 decryptedLetterMask);
+    event WinDecryptionRequested(uint8 guessN, uint256 timestamp);
+    event WordRevealRequested(address indexed player, uint256 timestamp);
+
     constructor() Ownable(msg.sender) {}
 
     function initialize(address _playerAddr, address _relayerAddr, uint16 _testFlag) external initializer {
@@ -169,6 +177,9 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
         cts[0] = Gateway.toUint256(eqMask);
         cts[1] = Gateway.toUint256(letterMaskGuess);
 
+        // Emit an event for easier tracking of decryption requests
+        emit GuessDecryptionRequested(guessN, block.timestamp);
+
         // Request decryption via the gateway
         Gateway.requestDecryption(cts, this.callbackGuess.selector, 0, block.timestamp + 100, false);
     }
@@ -196,6 +207,8 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
         // Request decryption via the Gateway
         uint256[] memory cts = new uint256[](1);
         cts[0] = Gateway.toUint256(is_equal);
+        emit WinDecryptionRequested(guessN, block.timestamp);
+
         Gateway.requestDecryption(cts, this.callbackClaimWin.selector, 0, block.timestamp + 100, false);
     }
 
@@ -216,16 +229,15 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
     //     return (l0, l1, l2, l3, l4);
     // }
 
-    function revealWord() public onlyPlayer {
+    function revealWord() public view onlyPlayer {
         // Prepare the ciphertext array for the five letters
         uint256[] memory cts = new uint256[](5);
 
-        cts[0] = Gateway.toUint256(word1Letters[0]);
-        cts[1] = Gateway.toUint256(word1Letters[1]);
-        cts[2] = Gateway.toUint256(word1Letters[2]);
-        cts[3] = Gateway.toUint256(word1Letters[3]);
-        cts[4] = Gateway.toUint256(word1Letters[4]);
+        for (uint8 i = 0; i < 5; i++) {
+            cts[i] = Gateway.toUint256(word1Letters[i]);
+        }
 
+        emit WordRevealRequested(msg.sender, block.timestamp);
         // Request decryption of the letters
         Gateway.requestDecryption(cts, this.callbackRevealWord.selector, 0, block.timestamp + 100, false);
     }
@@ -237,9 +249,9 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
         uint8 l2,
         uint8 l3,
         uint8 l4
-    ) public onlyGateway {
+    ) public view onlyPlayer returns (uint8, uint8, uint8, uint8, uint8) {
         // Handle the decrypted word letters here (e.g., emit events or store values)
-        emit WordRevealed(l0, l1, l2, l3, l4); // Optionally emit an event
+        return (l0, l1, l2, l3, l4); // Optionally emit an event
     }
 
     function revealWordAndStore() public onlyPlayer {
@@ -267,11 +279,33 @@ contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
             26;
     }
 
+    // function checkProof(bytes32[] calldata proof) public onlyRelayer {
+    //     assert(nGuesses == 5 || playerWon);
+    //     uint16 wordId = TFHE.decrypt(word1Id);
+    //     bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(wordId, word1))));
+    //     if (MerkleProof.verify(proof, root, leaf)) {
+    //         proofChecked = true;
+    //     }
+    // }
+
+    bytes32[] public storedProof;
+
     function checkProof(bytes32[] calldata proof) public onlyRelayer {
-        assert(nGuesses == 5 || playerWon);
-        uint16 wordId = TFHE.decrypt(word1Id);
-        bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(wordId, word1))));
-        if (MerkleProof.verify(proof, root, leaf)) {
+        // Store the proof for use in the callback
+        storedProof = proof;
+
+        // Prepare the ciphertext for word1Id
+        uint256[] memory cts = new uint256[](1);
+        cts[0] = Gateway.toUint256(word1Id);
+
+        // Request decryption of word1Id
+        Gateway.requestDecryption(cts, this.callbackCheckProof.selector, 0, block.timestamp + 100, false);
+    }
+
+    function callbackCheckProof(uint256 /*requestID*/, uint16 decryptedWordId) public onlyGateway {
+        // Handle the decrypted wordId and check the proof
+        bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(decryptedWordId, word1))));
+        if (MerkleProof.verify(storedProof, root, leaf)) {
             proofChecked = true;
         }
     }
