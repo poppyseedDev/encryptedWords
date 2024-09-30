@@ -103,6 +103,7 @@
   },
   "dependencies": {
     "@openzeppelin/contracts-upgradeable": "^5.0.2",
+    "@openzeppelin/merkle-tree": "^1.0.7",
     "extra-bigint": "^1.1.18",
     "sqlite3": "^5.1.7"
   }
