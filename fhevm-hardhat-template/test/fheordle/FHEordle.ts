@@ -6,6 +6,7 @@ import { FHEordle, FHEordleFactory, FHEordle__factory } from "../../types";
 import { createInstances } from "../instance";
 import { getSigners, initSigners } from "../signers";
 import { createTransaction } from "../utils";
+import { deployFHEordleFixture } from "./FHEordle.fixture";
 import { VALID_WORDS } from "./validWordsList";
 import { WORDS } from "./wordslist";
 
@@ -44,48 +45,51 @@ describe("FHEordle", function () {
   });
 
   beforeEach(async function () {
-    const contractFactory = await ethers.getContractFactory("FHEordle");
-    const contractInitializer = await contractFactory.connect(this.signers.alice).deploy();
-    this.contractAddress = await contractInitializer.getAddress();
-
-    const fheordleFactoryFactory = await ethers.getContractFactory("FHEordleFactory");
-    const factoryContract = await fheordleFactoryFactory.connect(this.signers.alice).deploy(this.contractAddress);
-    await factoryContract.waitForDeployment();
-    this.factoryContractAddress = await contractInitializer.getAddress();
+    const [contract, factoryContract] = await deployFHEordleFixture();
+    this.factoryContractAddress = await factoryContract.getAddress();
     this.factoryContract = factoryContract;
+    this.contractAddress = await contract.getAddress();
+    this.contract = contract;
 
     // Create contract instances
     this.instances = await createInstances(this.signers);
   });
 
   it("should initialize encrypted word ID", async function () {
-    const input = this.instances.bob.createEncryptedInput(this.contractAddress, this.signers.bob.address);
-    input.add8(3);
+    // const input = this.instances.bob.createEncryptedInput(this.contractAddress, this.signers.bob.address);
+    // input.add16(3);
     // const encryptedWordId = input.encrypt();
     const salt = ethers.encodeBytes32String("test_salt");
-    console.log("--------------------------");
-    console.log("Available functions in factory: ", Object.keys(this.factoryContract.functions));
-    console.log("--------------------------");
 
-    const creategameTx = await this.factoryContract.createGame(this.signers.bob.address, salt);
+    const creategameTx = await this.factoryContract.createTest(this.signers.bob.address, 3, salt);
     await creategameTx.wait();
 
     // Retrieve the new contract address
-    // const gameAddress = await this.fheordleFactory.userLastContract(this.signers.alice.address);
-    // const fheordleGame = FHEordle__factory.connect(gameAddress, this.signers.alice);
+    const gameAddress = await this.factoryContract.userLastContract(this.signers.alice.address);
+    // const fheordleGame = this.factoryContract.connect(gameAddress, this.signers.alice);
+    const fheordleGame = await ethers.getContractAt("FHEordle", gameAddress, this.signers.bob);
 
-    // // Interact with the contract
-    // const tx = await this.fheordleFactoryFactory
-    //   .connect(bob)
-    //   .initialize(this.signers.alice.address, bob.address, encryptedWordId);
-    // await tx.wait();
+    const wordId = await fheordleGame.getWord1Id();
 
-    // Check the encrypted word ID
-    // const word1Id = await fheordleGame.getWord1Id();
-    // expect(word1Id).to.equal(encryptedWordId);
+    // Generate the private and public key, used for the reencryption
+    const { publicKey: publicKeyBob, privateKey: privateKeyBob } = this.instances.bob.generateKeypair();
 
-    // const word1Id = await this.fheordleFactoryFactory.getWord1Id();
-    // expect(word1Id).to.equal(encryptedWordId); // Validate the encrypted word ID
+    const eip712 = this.instances.bob.createEIP712(publicKeyBob, this.contractAddress);
+    // This function will call the gateway and decrypt the received value with the provided private key
+    const signatureBob = await this.signers.alice.signTypedData(
+      eip712.domain,
+      { Reencrypt: eip712.types.Reencrypt },
+      eip712.message,
+    );
+    const wordIdBob = await this.instances.alice.reencrypt(
+      wordId,
+      privateKeyBob,
+      publicKeyBob,
+      signatureBob.replace("0x", ""),
+      this.contractAddress,
+      this.signers.bob.address,
+    );
+    expect(wordIdBob).to.equal(3);
   });
 
   // it("should correctly decrypt and submit a word", async function () {

@@ -8,6 +8,14 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "fhevm/gateway/GatewayCaller.sol";
 
+/**
+ * @title FHEordle
+ * @notice This contract implements a fully homomorphic encryption (FHE) version of the classic word game, similar to "Wordle".
+ *         It allows players to submit encrypted guesses and receive feedback on whether their guess is correct.
+ *         The contract is integrated with a secure gateway that handles decryption requests to ensure confidentiality.
+ * @dev This contract leverages the TFHE library for encryption operations and the MerkleProof library for verifying word sets.
+ *      The game state and logic are managed using various public and private variables.
+ */
 contract FHEordle is Ownable2Step, GatewayCaller, Initializable {
     /// Constants
     bytes32 public constant root = 0x918fd5f641d6c8bb0c5e07a42f975969c2575250dc3fb743346d1a3c11728bdd;
